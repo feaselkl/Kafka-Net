@@ -146,8 +146,7 @@ let main argv =
     //Pull unrefined queue items from the flights queue.
     let (config:RdKafka.Config) = new Config(GroupId = "Airplane Enricher")
     use consumer = new EventConsumer(config, "sandbox.hortonworks.com:6667")
-    //let topics = ["Flights"]
-    let topics = ["Flights2"]
+    let topics = ["Flights"]
     consumer.Subscribe(new System.Collections.Generic.List<string>(topics |> List.toSeq))
 
     //After enrichment, put the message onto the enriched flights queue
