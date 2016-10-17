@@ -1,0 +1,37 @@
+# Go to your current Hadoop version's kafka bin directory.
+cd /usr/hdp/[version]/kafka/bin/
+
+# Step 1:  Create and modify a test topic.
+	# Create the test topic.
+./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic test
+	# Notice that we see our test topic.
+./kafka-topics.sh --zookeeper localhost:2181 --list
+	# This lets us push messages onto a topic without needing to write a program.  I recommend
+	# opening two PuTTY sessions or shells, running this in one of them.
+./kafka-console-producer.sh --broker-list sandbox.hortonworks.com:6667 --topic test
+	# This lets us read messages which were pushed onto a topic.  The from-beginning flag lets us see all
+	# messages; if you leave it off, you will only see newly-appended messages.
+./kafka-console-consumer.sh --zookeeper localhost:2181 --topic test --from-beginning
+	# Once we're done playing around, we can clean up our mess by deleting the test topic.
+	# NOTE:  Make sure that delete.topic.enable is set to true!  You can see that from the Kafka config (e.g., in Ambari)
+./kafka-topics.sh --delete --zookeeper localhost:2181 --topic test
+
+# Step 2:  Create topics for the console applications to use.
+./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic Flights
+./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic EnrichedFlights
+
+# Step 3:  If we want to clean out the queues without dropping and re-creating them, here's the process.
+	# First, add a new config setting to set retention to 1 second.
+./kafka-configs.sh --zookeeper localhost:2181 --alter --entity-type topics --entity-name EnrichedFlights --add-config retention.ms=1000
+./kafka-configs.sh --zookeeper localhost:2181 --alter --entity-type topics --entity-name Flights --add-config retention.ms=100000
+	# You can check to make sure this is correct by describing the topics.
+./kafka-configs.sh --zookeeper localhost:2181 --describe --entity-type topics --entity-name Flights
+./kafka-configs.sh --zookeeper localhost:2181 --describe --entity-type topics --entity-name EnrichedFlights
+	# Give this a minute or two to propagate and clear out the topic.  Then run the following commands to return
+	# to the default retention period (168 hours by default).
+./kafka-configs.sh --zookeeper localhost:2181 --alter --entity-type topics --entity-name EnrichedFlights --delete-config retention.ms
+./kafka-configs.sh --zookeeper localhost:2181 --alter --entity-type topics --entity-name Flights --delete-config retention.ms
+	# To make sure the process did its job, check for messages; you should see none.  Be sure to give the delete-config
+	# process a minute or two to propagate so you don't accidentally lose some data during your load process.
+./kafka-console-consumer.sh --zookeeper localhost:2181 --topic Flights --from-beginning
+./kafka-console-consumer.sh --zookeeper localhost:2181 --topic EnrichedFlights --from-beginning
