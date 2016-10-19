@@ -1,13 +1,18 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.25123.0
+VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Kafka.Consumer", "Kafka.Consumer\Kafka.Consumer.fsproj", "{5FA8F31D-CF8E-4B2A-A208-D8069C08D942}"
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Kafka.Producer", "Kafka.Producer\Kafka.Producer.fsproj", "{CC21F4A6-83CE-4731-96B5-CDA411A79913}"
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Kafka.Enricher", "Kafka.Enricher\Kafka.Enricher.fsproj", "{151AC434-37AF-4C28-823C-AAB068AB37B5}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{EF0E000F-BD89-4C2A-A1FB-6B9D74F9CE32}"
+	ProjectSection(SolutionItems) = preProject
+		KafkaScripts.txt = KafkaScripts.txt
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
