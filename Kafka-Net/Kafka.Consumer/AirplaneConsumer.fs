@@ -2,8 +2,8 @@
 
 open RdKafka
 open System
-open FSharp.Collections.ParallelSeq
 open Newtonsoft.Json
+open System.Collections.Generic
 
 //Step 3:  pull flight data from the cleansed queue and perform grouping.
 //Flights are saved as JSON, so it should be easy to deserialize into a valid type.
@@ -18,7 +18,7 @@ type Flight = { Year:int; Month:int; DayOfMonth:int; DayOfWeek:int; DepTime:Opti
                 Cancelled:bool; CancellationCode:string; Diverted:bool; CarrierDelay:int; WeatherDelay:int; NASDelay:int; SecurityDelay:int; 
                 LateAircraftDelay:int; OriginCity:string; OriginState:string; DestinationCity:string; DestinationState:string; }
 
-type FlightSolution = { DestinationState:string; ArrDelay:int }
+type FlightAggregates = { TotalNumberOfFlights:int; NumberOfDelayedFlights:int; TotalArrivalDelay:int }
 
 let readFromBeginning (consumer:EventConsumer) =
     consumer.OnPartitionsAssigned.Add(fun(partitions) -> 
@@ -29,7 +29,7 @@ let readFromBeginning (consumer:EventConsumer) =
         consumer.Assign(fb);
     )
 
-let processMessages (consumer:EventConsumer) n (flights:System.Collections.Generic.List<FlightSolution>) =
+let processMessages (consumer:EventConsumer) n (flightAggregates:System.Collections.Generic.Dictionary<string, FlightAggregates>) =
     //Always start from the beginning.
     readFromBeginning consumer
     let mutable x = 0
@@ -37,38 +37,30 @@ let processMessages (consumer:EventConsumer) n (flights:System.Collections.Gener
     consumer.OnMessage.Add(fun(msg) ->
         let messageString = System.Text.Encoding.UTF8.GetString(msg.Payload, 0, msg.Payload.Length)
         let flight = JsonConvert.DeserializeObject<Flight>(messageString)
-        let fsol = {DestinationState = flight.DestinationState;
-                    ArrDelay = match flight.ArrDelay.IsSome with
-                                | true -> flight.ArrDelay.Value
-                                | false -> 0 }
-        flights.Add(fsol)
+        let currentResults = match flightAggregates.ContainsKey(flight.DestinationState) with
+                                | true -> flightAggregates.[flight.DestinationState]
+                                | false -> { TotalNumberOfFlights=0; NumberOfDelayedFlights=0; TotalArrivalDelay=0; }
+            
+        let newResults = {
+            TotalNumberOfFlights=currentResults.TotalNumberOfFlights + 1;
+            NumberOfDelayedFlights=match flight.ArrDelay.IsSome with
+                                    | true -> if (flight.ArrDelay.Value > 0)
+                                                then currentResults.NumberOfDelayedFlights + 1
+                                                else currentResults.NumberOfDelayedFlights
+                                    | false -> currentResults.NumberOfDelayedFlights;
+            TotalArrivalDelay=match flight.ArrDelay.IsSome with
+                                    | true -> if (flight.ArrDelay.Value > 0)
+                                                then currentResults.TotalArrivalDelay + flight.ArrDelay.Value
+                                                else currentResults.TotalArrivalDelay
+                                    | false -> currentResults.TotalArrivalDelay;
+        }
+        flightAggregates.[flight.DestinationState] <- newResults
 
         //Every once in a while, spit out a message to let us know we're still working.
         x <- x + 1
         if x % n = 0 then
             printfn "Read in %i messages" x
     )
-
-let delaysByState flightTuple =
-    let totalFlights =
-        flightTuple
-        |> Seq.countBy fst
-        |> Seq.sort
-    let delayedFlights =
-        flightTuple
-        |> Seq.filter(fun(dest,delay) -> delay > 0)
-        |> Seq.countBy fst
-        |> Seq.sort
-    let totalArrivalDelay =
-        flightTuple
-        |> Seq.groupBy(fun(dest,delay) -> dest)
-        |> Seq.map(fun(dest,delay) -> (dest,delay |> Seq.sumBy snd))
-        |> Seq.sort
-    let results = 
-        Seq.zip3 totalFlights delayedFlights totalArrivalDelay
-        |> Seq.map(fun((dest,flights),(dest,delayed),(dest,delay)) -> dest,flights,delayed,delay)
-        |> Seq.sort
-    results
 
 [<EntryPoint>]
 let main argv = 
@@ -84,9 +76,9 @@ let main argv =
     let topics = ["EnrichedFlights"]
     consumer.Subscribe(new System.Collections.Generic.List<string>(topics |> List.toSeq))
 
-    let flights = new System.Collections.Generic.List<FlightSolution>()
+    let flightAggregates = new Dictionary<string, FlightAggregates>()
 
-    processMessages consumer 10000 flights
+    processMessages consumer 10000 flightAggregates
     consumer.Start()
     //Because consumer is an event, we leave it to the user to decide when to quit.
     //This allows for sampling the stream rather than needing to wait until its conclusion.
@@ -99,12 +91,9 @@ let main argv =
     stopWatch.Reset()
     stopWatch.Start()
 
-    let flightTuple =
-        List.ofSeq flights
-        |> Seq.map(fun f -> (f.DestinationState, f.ArrDelay))
-    let results = delaysByState flightTuple
-                    |> Seq.iter(fun(dest,flights,delayed,delay) ->
-                            printfn "Dest: %A. Flights: %i.  Delayed: %i.  Total Delay (min): %i.  Avg When Delayed (min): %.3f" dest flights delayed delay (float(delay)/float(delayed)))
+    flightAggregates |>
+        Seq.sortBy(fun f -> f.Key) |>
+        Seq.iter(fun f -> printfn "Dest: %A. Flights: %i.  Delayed: %i.  Total Delay (min): %i.  Avg When Delayed (min): %.3f" f.Key f.Value.TotalNumberOfFlights f.Value.NumberOfDelayedFlights f.Value.TotalArrivalDelay (float(f.Value.TotalArrivalDelay)/(float(f.Value.NumberOfDelayedFlights))))
 
     stopWatch.Stop()
     printfn "It took %A to aggregate the data.  Press enter to quit." stopWatch.Elapsed
