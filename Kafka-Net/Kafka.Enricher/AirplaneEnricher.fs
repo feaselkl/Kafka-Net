@@ -1,7 +1,10 @@
 ﻿module AirplaneEnricher
 
-open RdKafka
+open Confluent.Kafka
+open Confluent.Kafka.Serialization
 open System
+open System.Text
+open System.Collections.Generic
 open Newtonsoft.Json
 open FSharp.Data
 open FSharp.Data.SqlClient
@@ -27,20 +30,8 @@ type AirportSql =
 //Write to enriched queue
 //Step 3 will pull data from the enriched queue and perform filters & groups as desired.
 
-type Flight = { Year:int; Month:int; DayOfMonth:int; DayOfWeek:int; DepTime:Option<int>; CRSDepTime:int; ArrTime:Option<int>; CRSArrTime:int; 
-                UniqueCarrier:string; FlightNum:string; TailNum:string; ActualElapsedTime:Option<int>; CRSElapsedTime:Option<int>; AirTime:Option<int>;
-                ArrDelay:Option<int>; DepDelay:Option<int>; Origin:string; Dest:string; Distance:int; TaxiIn:Option<int>; TaxiOut:Option<int>; 
-                Cancelled:bool; CancellationCode:string; Diverted:bool; CarrierDelay:int; WeatherDelay:int; NASDelay:int; SecurityDelay:int; 
-                LateAircraftDelay:int; OriginCity:string; OriginState:string; DestinationCity:string; DestinationState:string; }
-
-let readFromBeginning (consumer:EventConsumer) =
-    consumer.OnPartitionsAssigned.Add(fun(partitions) -> 
-        printfn "Starting from the beginning..."
-        let fromBeginning = List.ofSeq partitions
-                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, RdKafka.Offset.Beginning))  
-        let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
-        consumer.Assign(fb);
-    )
+type EnrichedFlight = { Date:DateTime; DepTime:Option<int>; ArrTime:Option<int>; UniqueCarrier:string; ArrDelay:Option<int>; DepDelay:Option<int>;
+                Origin:string; Dest:string; OriginCity:string; OriginState:string; DestinationCity:string; DestinationState:string; }
 
 let filterNA (str:string) =
     let x = match str with
@@ -71,35 +62,14 @@ let buildFlight (rawFlightMessage:string) (airports:System.Collections.Generic.I
     let destination = airports |> Seq.filter(fun f -> f.IATA.Value.Equals(flightSplit.[17])) |> Seq.head
 
     let flight = {
-        Year = Convert.ToInt32(flightSplit.[0]);
-        Month = Convert.ToInt32(flightSplit.[1]);
-        DayOfMonth = Convert.ToInt32(flightSplit.[2]);
-        DayOfWeek = Convert.ToInt32(flightSplit.[3]);
+        Date = new DateTime(Convert.ToInt32(flightSplit.[0]), Convert.ToInt32(flightSplit.[1]), Convert.ToInt32(flightSplit.[2]));
         DepTime = filterNA flightSplit.[4];
-        CRSDepTime = Convert.ToInt32(flightSplit.[5]);
         ArrTime = filterNA flightSplit.[6];
-        CRSArrTime = Convert.ToInt32(flightSplit.[7]);
         UniqueCarrier = flightSplit.[8];
-        FlightNum = flightSplit.[9];
-        TailNum = flightSplit.[10];
-        ActualElapsedTime = filterNA flightSplit.[11];
-        CRSElapsedTime = filterNA flightSplit.[12];
-        AirTime = filterNA flightSplit.[13];
         ArrDelay = filterNA flightSplit.[14];
         DepDelay = filterNA flightSplit.[15];
         Origin = flightSplit.[16];
         Dest = flightSplit.[17];
-        Distance = Convert.ToInt32(flightSplit.[18]);
-        TaxiIn = filterNA flightSplit.[19];
-        TaxiOut = filterNA flightSplit.[20];
-        Cancelled = convertNAbool flightSplit.[21];
-        CancellationCode = flightSplit.[22];
-        Diverted = convertNAbool flightSplit.[23];
-        CarrierDelay = convertNAint flightSplit.[24];
-        WeatherDelay = convertNAint flightSplit.[25];
-        NASDelay = convertNAint flightSplit.[26];
-        SecurityDelay = convertNAint flightSplit.[27];
-        LateAircraftDelay = convertNAint flightSplit.[28];
         OriginCity = origin.City.Value;
         OriginState = origin.State.Value;
         DestinationCity = destination.City.Value;
@@ -107,32 +77,13 @@ let buildFlight (rawFlightMessage:string) (airports:System.Collections.Generic.I
     }
     flight
 
-let publish (topic:Topic) (text:string) =
-    let data = System.Text.Encoding.UTF8.GetBytes(text)
-    topic.Produce(data) |> ignore
+let publish (producer:Producer<Null, string>) (topic:string) (text:string) =
+    producer.ProduceAsync(topic, null, text) |> ignore
 
-let processMessages (consumer:EventConsumer) (topic:Topic) startFromBeginning n (airports:System.Collections.Generic.IEnumerable<AirportSql.Record>) =
-    if startFromBeginning then readFromBeginning consumer
-    let mutable x = 0
-
-    consumer.OnMessage.Add(fun(msg) ->
-        let rawFlightMessage = System.Text.Encoding.UTF8.GetString(msg.Payload, 0, msg.Payload.Length)
-        try
-            //build flight type -- enrich
-            let flight = buildFlight rawFlightMessage airports
-
-            //publish
-            let jsonFlight = JsonConvert.SerializeObject(flight)
-            publish topic jsonFlight
-
-            //Every once in a while, spit out a message to let us know we're still working.
-            x <- x + 1
-            if x % n = 0 then
-                let text = rawFlightMessage.Substring(0, 30)
-                printfn "Pushed mesage %i (%A)" x text
-        with
-        | :? System.Exception as ex -> printfn "Error:  %s ...  Message:  %s" ex.Message rawFlightMessage
-    )
+let processMessage (message:string) (airports:System.Collections.Generic.IEnumerable<AirportSql.Record>) =
+    let flight = buildFlight message airports
+    let jsonFlight = JsonConvert.SerializeObject(flight)
+    jsonFlight
 
 [<EntryPoint>]
 let main argv = 
@@ -143,30 +94,70 @@ let main argv =
     Console.ForegroundColor <- ConsoleColor.White
     Console.Clear()
 
-    //Pull unrefined queue items from the flights queue.
-    let (config:RdKafka.Config) = new Config(GroupId = "Airplane Enricher")
-    use consumer = new EventConsumer(config, "sandbox.hortonworks.com:6667")
-    let topics = ["Flights"]
-    consumer.Subscribe(new System.Collections.Generic.List<string>(topics |> List.toSeq))
-
-    //After enrichment, put the message onto the enriched flights queue
-    use producer = new Producer("sandbox.hortonworks.com:6667")
-    let metadata = producer.Metadata(allTopics=true)
-    use topic = producer.Topic("EnrichedFlights")
-
+    //Build up airport metadata before we begin retrieving data from Kafka.
     let conn = new System.Data.SqlClient.SqlConnection(connectionString)
     conn.Open()
     let airports = AirportSql.Create(conn).Execute() |> Seq.toList
     conn.Close()
 
-    processMessages consumer topic true 10000 airports
-    consumer.Start()
-    printfn "Started enricher. Press enter to stop enriching."
-    System.Console.ReadLine() |> ignore
-    consumer.Stop() |> ignore
+    //Pull unrefined queue items from the flights queue.
+    let config = new Dictionary<string, Object>()
+    config.Add("bootstrap.servers", "clusterino:6667")
+    config.Add("group.id", "airplane-enricher")
+    config.Add("enable.auto.commit", true)
+    config.Add("auto.commit.interval.ms", 5000)
+    //config.Add("statistics.interval.ms", 10000)
 
+    let flightsTopic = "Flights"
+    let enrichedFlightsTopic = "EnrichedFlights2"
+
+    //We need a consumer to read from Flights and a producer to write to EnrichedFlights.
+    use producer = new Producer<Null, string>(config, null, new StringSerializer(Encoding.UTF8))
+    use consumer = new Consumer<Null, string>(config, null, new StringDeserializer(Encoding.UTF8))
+
+    let mutable x = 0
+    consumer.OnMessage.Add(fun(msg) ->
+        //Convert our raw message into an enriched message
+        let processedMessage = processMessage msg.Value airports
+        //Write the enriched message out to the enriched flights topic
+        publish producer enrichedFlightsTopic processedMessage
+
+        //Every once in a while, spit out a message to let us know we're still working.
+        x <- x + 1
+        if x % 10000 = 0 then
+            printfn "Read in %i messages" x
+    )
+
+    //Whenever we initially assing partitions, start from the beginning of the topic.
+    consumer.OnPartitionsAssigned.Add(fun(part) ->
+        let fromBeginning = List.ofSeq part
+                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Beginning))  
+        let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
+        consumer.Assign(fb);
+    )
+
+    consumer.OnPartitionsRevoked.Add(fun(part) ->
+        consumer.Unassign()
+    )
+
+    consumer.Subscribe(flightsTopic)
+
+    //Continuously poll for messages.
+    let rec loop() =
+        consumer.Poll(TimeSpan.FromMilliseconds(5000.))
+
+        if Console.KeyAvailable then
+            match Console.ReadKey().Key with
+            | ConsoleKey.Enter -> ()
+            | _ -> loop()
+        else
+            loop()
+    
+    printfn "Started enricher. Press enter to stop enriching."
+    loop()
     stopWatch.Stop()
     printfn "You've finished enriching some data.  You stopped after %A.  Hit Enter to close this app." stopWatch.Elapsed
+
     System.Console.ReadLine() |> ignore
 
     0 // return an integer exit code

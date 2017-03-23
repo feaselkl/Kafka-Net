@@ -1,7 +1,10 @@
 ﻿module AirplaneProducer
 
-open RdKafka
+open Confluent.Kafka
+open Confluent.Kafka.Serialization
+open System.Collections.Generic
 open System
+open System.Text
 open System.IO
 open FSharp.Collections.ParallelSeq
 
@@ -11,15 +14,14 @@ open FSharp.Collections.ParallelSeq
 //Sample queue item:
 //2008,1,3,4,2003,1955,2211,2225,WN,335,N712SW,128,150,116,-14,8,IAD,TPA,810,4,8,0,,0,NA,NA,NA,NA,NA
 
-let publish (topic:Topic) (text:string) =
-    let data = System.Text.Encoding.UTF8.GetBytes(text)
-    topic.Produce(data) |> ignore
+let publish (producer:Producer<Null, string>) (topic:string) (text:string) =
+    producer.ProduceAsync(topic, null, text) |> ignore
 
-let loadEntries (topic:Topic) fileName =
+let loadEntries (producer:Producer<Null, string>) (topic:string) fileName =
     File.ReadLines(fileName)
         |> PSeq.filter(fun e -> e.Length > 0)
         |> PSeq.filter(fun e -> not (e.StartsWith("Year")))   //Filter out the header row
-        |> PSeq.iter(fun e -> publish topic e)
+        |> PSeq.iter(fun e -> publish producer topic e)
 
 [<EntryPoint>]
 let main argv = 
@@ -29,21 +31,17 @@ let main argv =
     Console.ForegroundColor <- ConsoleColor.White
     Console.Clear()
 
-    let topicConfig = new TopicConfig()
-    topicConfig.["request.required.acks"] = "0" |> ignore
-    let config = new Config();
-    config.DefaultTopicConfig = topicConfig |> ignore
-    config.["socket.blocking.max.ms"] = "1" |> ignore
-    config.["queue.buffering.max.messages"] = "1" |> ignore
-    config.["queue.buffering.max.ms"] = "1" |> ignore
+    let config = new Dictionary<string, Object>()
+    config.Add("bootstrap.servers", "clusterino:6667")
+    config.Add("group.id", "airplane-producer")
+    //config.Add("socket.blocking.max.ms", "1")
+    //config.Add("queue.buffering.max.ms", "1")
 
-    use producer = new Producer(config, "sandbox.hortonworks.com:6667")
-    let metadata = producer.Metadata(allTopics=true)
-    
-    use topic = producer.Topic("Flights")
+    let topic = "Flights2"
+    use producer = new Producer<Null, string>(config, null, new StringSerializer(Encoding.UTF8))
 
     //Read and publish a list from a file
-    loadEntries topic "C:/Temp/AirportData/2008.csv"
+    loadEntries producer topic "C:/Temp/AirportData/2008.csv"
 
     stopWatch.Stop()
     printfn "Hey, we've finished loading all of the data!  It took us %A.  Hit Enter to close this app." stopWatch.Elapsed

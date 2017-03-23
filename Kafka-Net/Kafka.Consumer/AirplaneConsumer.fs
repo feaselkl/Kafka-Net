@@ -1,7 +1,10 @@
 ﻿module AirplaneConsumer
 
-open RdKafka
+open Confluent.Kafka
+open Confluent.Kafka.Serialization
 open System
+open System.Text
+open System.Collections.Generic
 open Newtonsoft.Json
 open System.Collections.Generic
 
@@ -20,47 +23,26 @@ type Flight = { Year:int; Month:int; DayOfMonth:int; DayOfWeek:int; DepTime:Opti
 
 type FlightAggregates = { TotalNumberOfFlights:int; NumberOfDelayedFlights:int; TotalArrivalDelay:int }
 
-let readFromBeginning (consumer:EventConsumer) =
-    consumer.OnPartitionsAssigned.Add(fun(partitions) -> 
-        printfn "Starting from the beginning..."
-        let fromBeginning = List.ofSeq partitions
-                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, RdKafka.Offset.Beginning))  
-        let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
-        consumer.Assign(fb);
-    )
-
-let processMessages (consumer:EventConsumer) n (flightAggregates:System.Collections.Generic.Dictionary<string, FlightAggregates>) =
-    //Always start from the beginning.
-    readFromBeginning consumer
-    let mutable x = 0
-
-    consumer.OnMessage.Add(fun(msg) ->
-        let messageString = System.Text.Encoding.UTF8.GetString(msg.Payload, 0, msg.Payload.Length)
-        let flight = JsonConvert.DeserializeObject<Flight>(messageString)
-        let currentResults = match flightAggregates.ContainsKey(flight.DestinationState) with
-                                | true -> flightAggregates.[flight.DestinationState]
-                                | false -> { TotalNumberOfFlights=0; NumberOfDelayedFlights=0; TotalArrivalDelay=0; }
+let processMessage (message:string) (flightAggregates:System.Collections.Generic.Dictionary<string, FlightAggregates>) =
+    let flight = JsonConvert.DeserializeObject<Flight>(message)
+    let currentResults = match flightAggregates.ContainsKey(flight.DestinationState) with
+                            | true -> flightAggregates.[flight.DestinationState]
+                            | false -> { TotalNumberOfFlights=0; NumberOfDelayedFlights=0; TotalArrivalDelay=0; }
             
-        let newResults = {
-            TotalNumberOfFlights=currentResults.TotalNumberOfFlights + 1;
-            NumberOfDelayedFlights=match flight.ArrDelay.IsSome with
-                                    | true -> if (flight.ArrDelay.Value > 0)
-                                                then currentResults.NumberOfDelayedFlights + 1
-                                                else currentResults.NumberOfDelayedFlights
-                                    | false -> currentResults.NumberOfDelayedFlights;
-            TotalArrivalDelay=match flight.ArrDelay.IsSome with
-                                    | true -> if (flight.ArrDelay.Value > 0)
-                                                then currentResults.TotalArrivalDelay + flight.ArrDelay.Value
-                                                else currentResults.TotalArrivalDelay
-                                    | false -> currentResults.TotalArrivalDelay;
-        }
-        flightAggregates.[flight.DestinationState] <- newResults
-
-        //Every once in a while, spit out a message to let us know we're still working.
-        x <- x + 1
-        if x % n = 0 then
-            printfn "Read in %i messages" x
-    )
+    let newResults = {
+        TotalNumberOfFlights=currentResults.TotalNumberOfFlights + 1;
+        NumberOfDelayedFlights=match flight.ArrDelay.IsSome with
+                                | true -> if (flight.ArrDelay.Value > 0)
+                                            then currentResults.NumberOfDelayedFlights + 1
+                                            else currentResults.NumberOfDelayedFlights
+                                | false -> currentResults.NumberOfDelayedFlights;
+        TotalArrivalDelay=match flight.ArrDelay.IsSome with
+                                | true -> if (flight.ArrDelay.Value > 0)
+                                            then currentResults.TotalArrivalDelay + flight.ArrDelay.Value
+                                            else currentResults.TotalArrivalDelay
+                                | false -> currentResults.TotalArrivalDelay;
+    }
+    flightAggregates.[flight.DestinationState] <- newResults
 
 [<EntryPoint>]
 let main argv = 
@@ -70,22 +52,61 @@ let main argv =
     Console.BackgroundColor <- ConsoleColor.DarkCyan
     Console.ForegroundColor <- ConsoleColor.White
     Console.Clear()
-    //Pull enriched queue items from the EnrichedFlights topic.
-    let (config:RdKafka.Config) = new Config(GroupId = "Airplane Consumer")
-    use consumer = new EventConsumer(config, "sandbox.hortonworks.com:6667")
-    let topics = ["EnrichedFlights"]
-    consumer.Subscribe(new System.Collections.Generic.List<string>(topics |> List.toSeq))
 
     let flightAggregates = new Dictionary<string, FlightAggregates>()
 
-    processMessages consumer 10000 flightAggregates
-    consumer.Start()
+    //Pull enriched queue items from the EnrichedFlights topic.
+    let config = new Dictionary<string, Object>()
+    config.Add("bootstrap.servers", "clusterino:6667")
+    config.Add("group.id", "airplane-consumer")
+    config.Add("enable.auto.commit", true)
+    config.Add("auto.commit.interval.ms", 5000)
+    //config.Add("statistics.interval.ms", 10000)
+
+    let enrichedFlightsTopic = "EnrichedFlights"
+
+    use consumer = new Consumer<Null, string>(config, null, new StringDeserializer(Encoding.UTF8))
+
+    let mutable x = 0
+    consumer.OnMessage.Add(fun(msg) ->
+        //Write our enriched flight into a set of aggregates.
+        processMessage msg.Value flightAggregates
+
+        //Every once in a while, spit out a message to let us know we're still working.
+        x <- x + 1
+        if x % 10000 = 0 then
+            printfn "Read in %i messages" x
+    )
+
+    //Whenever we initially assing partitions, start from the beginning of the topic.
+    consumer.OnPartitionsAssigned.Add(fun(part) ->
+        let fromBeginning = List.ofSeq part
+                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Beginning))  
+        let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
+        consumer.Assign(fb);
+    )
+
+    consumer.OnPartitionsRevoked.Add(fun(part) ->
+        consumer.Unassign()
+    )
+
+    consumer.Subscribe(enrichedFlightsTopic)
+
+    //Continuously poll for messages.
+    let rec loop() =
+        consumer.Poll(TimeSpan.FromMilliseconds(7000.))
+
+        if Console.KeyAvailable then
+            match Console.ReadKey().Key with
+            | ConsoleKey.Enter -> ()
+            | _ -> loop()
+        else
+            loop()
+    
     //Because consumer is an event, we leave it to the user to decide when to quit.
     //This allows for sampling the stream rather than needing to wait until its conclusion.
     printfn "Started reader. Press enter to finalize calculations and display results."
-    System.Console.ReadLine() |> ignore
-    consumer.Stop() |> ignore
-
+    loop()
     stopWatch.Stop()
     printfn "You've finished pulling enriched data.  You stopped after %A.  Now aggregating data..." stopWatch.Elapsed
     stopWatch.Reset()
