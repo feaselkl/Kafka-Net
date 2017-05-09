@@ -34,8 +34,11 @@ let main argv =
     let config = new Dictionary<string, Object>()
     config.Add("bootstrap.servers", "clusterino:6667")
     config.Add("group.id", "airplane-producer")
-    //config.Add("socket.blocking.max.ms", "1")
-    //config.Add("queue.buffering.max.ms", "1")
+    //Good settings for high throughput.  For low latency, setting queue.buffering.max.ms = 1
+    //will push ASAP but send fewer messages in a block.
+    config.Add("batch.num.messages", "50000")
+    config.Add("queue.buffering.max.ms", "300")
+    config.Add("compression.codec", "snappy")
 
     let topic = "Flights2"
     use producer = new Producer<Null, string>(config, null, new StringSerializer(Encoding.UTF8))

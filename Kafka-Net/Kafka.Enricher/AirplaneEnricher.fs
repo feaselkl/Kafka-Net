@@ -30,8 +30,7 @@ type AirportSql =
 //Write to enriched queue
 //Step 3 will pull data from the enriched queue and perform filters & groups as desired.
 
-type EnrichedFlight = { Date:DateTime; DepTime:Option<int>; ArrTime:Option<int>; UniqueCarrier:string; ArrDelay:Option<int>; DepDelay:Option<int>;
-                Origin:string; Dest:string; OriginCity:string; OriginState:string; DestinationCity:string; DestinationState:string; }
+type EnrichedFlight = { ArrDelay:int; Origin:string; Dest:string; DestST:string; }
 
 let filterNA (str:string) =
     let x = match str with
@@ -62,18 +61,12 @@ let buildFlight (rawFlightMessage:string) (airports:System.Collections.Generic.I
     let destination = airports |> Seq.filter(fun f -> f.IATA.Value.Equals(flightSplit.[17])) |> Seq.head
 
     let flight = {
-        Date = new DateTime(Convert.ToInt32(flightSplit.[0]), Convert.ToInt32(flightSplit.[1]), Convert.ToInt32(flightSplit.[2]));
-        DepTime = filterNA flightSplit.[4];
-        ArrTime = filterNA flightSplit.[6];
-        UniqueCarrier = flightSplit.[8];
-        ArrDelay = filterNA flightSplit.[14];
-        DepDelay = filterNA flightSplit.[15];
+        ArrDelay = match filterNA flightSplit.[14] with
+                    | None -> 0
+                    | Some x -> x;
         Origin = flightSplit.[16];
         Dest = flightSplit.[17];
-        OriginCity = origin.City.Value;
-        OriginState = origin.State.Value;
-        DestinationCity = destination.City.Value;
-        DestinationState = destination.State.Value;
+        DestST = destination.State.Value;
     }
     flight
 
@@ -104,9 +97,25 @@ let main argv =
     let config = new Dictionary<string, Object>()
     config.Add("bootstrap.servers", "clusterino:6667")
     config.Add("group.id", "airplane-enricher")
+    //Good settings for high throughput.  For low latency, setting queue.buffering.max.ms = 1
+    //will push ASAP but send fewer messages in a block.
+    config.Add("batch.num.messages", "5000")
+    config.Add("queue.buffering.max.ms", "300")
+    config.Add("compression.codec", "snappy")
+    //Settings for how frequently we update the consumer offset
     config.Add("enable.auto.commit", true)
     config.Add("auto.commit.interval.ms", 5000)
+    //Increase throughput for consumer
+    config.Add("fetch.wait.max.ms", 5000)
+    config.Add("fetch.min.bytes", 4000)
+    //I'm using Kafka 0.10.0 or later, so I want to set this to true.
+    config.Add("api.version.request", true)
     //config.Add("statistics.interval.ms", 10000)
+
+    //I want to default to starting at the smallest offset in the partition if we don't already have a valid offset.
+    let topicConfig = new Dictionary<string, Object>()
+    topicConfig.Add("auto.offset.reset", "earliest")
+    config.Add("default.topic.config", topicConfig)
 
     let flightsTopic = "Flights"
     let enrichedFlightsTopic = "EnrichedFlights2"
@@ -128,10 +137,12 @@ let main argv =
             printfn "Read in %i messages" x
     )
 
-    //Whenever we initially assing partitions, start from the beginning of the topic.
+    //Whenever we initially assing partitions, start from the stored value.
+    //Because I changed auto.offset.reset above to "smallest," it will default to the beginning of the partition,
+    //but will pick up the current offset if I stop and restart the app.
     consumer.OnPartitionsAssigned.Add(fun(part) ->
         let fromBeginning = List.ofSeq part
-                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Beginning))  
+                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Stored))  
         let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
         consumer.Assign(fb);
     )

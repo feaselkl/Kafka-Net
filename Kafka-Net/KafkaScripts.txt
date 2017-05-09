@@ -17,8 +17,8 @@ cd /usr/hdp/[version]/kafka/bin/
 ./kafka-topics.sh --delete --zookeeper localhost:2181 --topic test
 
 # Step 2:  Create topics for the console applications to use.
-./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 12 --topic Flights
-./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 12 --topic EnrichedFlights
+./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 4 --topic Flights
+./kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 4 --topic EnrichedFlights
 
 # Step 3:  If we want to clean out the queues without dropping and re-creating them, here's the process.
 	# First, add a new config setting to set retention to 1 second.
