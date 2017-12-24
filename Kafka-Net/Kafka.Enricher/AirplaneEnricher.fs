@@ -52,13 +52,13 @@ let convertNAbool (str:string) =
             | _ -> false
     x
 
-let buildFlight (rawFlightMessage:string) (airports:System.Collections.Generic.IEnumerable<AirportSql.Record>) =
+let buildFlight (rawFlightMessage:string) (airports:IDictionary<string, AirportSql.Record>) =
     //rawFlightMessage looks like:
     //2008,1,3,4,2003,1955,2211,2225,WN,335,N712SW,128,150,116,-14,8,IAD,TPA,810,4,8,0,,0,NA,NA,NA,NA,NA
 
     let flightSplit = rawFlightMessage.Split(',')
-    let origin = airports |> Seq.filter(fun f -> f.IATA.Value.Equals(flightSplit.[16])) |> Seq.head
-    let destination = airports |> Seq.filter(fun f -> f.IATA.Value.Equals(flightSplit.[17])) |> Seq.head
+    let origin = airports.Item(flightSplit.[16])
+    let destination = airports.Item(flightSplit.[17])
 
     let flight = {
         ArrDelay = match filterNA flightSplit.[14] with
@@ -73,10 +73,14 @@ let buildFlight (rawFlightMessage:string) (airports:System.Collections.Generic.I
 let publish (producer:Producer<Null, string>) (topic:string) (text:string) =
     producer.ProduceAsync(topic, null, text) |> ignore
 
-let processMessage (message:string) (airports:System.Collections.Generic.IEnumerable<AirportSql.Record>) =
+let processMessage (message:string) (airports:IDictionary<string, AirportSql.Record>) =
     let flight = buildFlight message airports
     let jsonFlight = JsonConvert.SerializeObject(flight)
     jsonFlight
+
+let buildAirportDictionary (airports:System.Collections.Generic.IEnumerable<AirportSql.Record>) =
+    let airportDict = airports |> Seq.map(fun a -> a.IATA.Value, a) |> dict
+    airportDict
 
 [<EntryPoint>]
 let main argv = 
@@ -90,8 +94,11 @@ let main argv =
     //Build up airport metadata before we begin retrieving data from Kafka.
     let conn = new System.Data.SqlClient.SqlConnection(connectionString)
     conn.Open()
-    let airports = AirportSql.Create(conn).Execute() |> Seq.toList
+    let airportsList = AirportSql.Create(conn).Execute() |> Seq.toList
     conn.Close()
+    //Convert the list to a dictionary; this improves lookup performance considerably,
+    //to the point where it can be a 10x throughput improvement just from making this switch.
+    let airports = buildAirportDictionary airportsList
 
     //Pull unrefined queue items from the flights queue.
     let config = new Dictionary<string, Object>()
@@ -118,7 +125,7 @@ let main argv =
     config.Add("default.topic.config", topicConfig)
 
     let flightsTopic = "Flights"
-    let enrichedFlightsTopic = "EnrichedFlights2"
+    let enrichedFlightsTopic = "EnrichedFlights"
 
     //We need a consumer to read from Flights and a producer to write to EnrichedFlights.
     use producer = new Producer<Null, string>(config, null, new StringSerializer(Encoding.UTF8))
@@ -142,7 +149,7 @@ let main argv =
     //but will pick up the current offset if I stop and restart the app.
     consumer.OnPartitionsAssigned.Add(fun(part) ->
         let fromBeginning = List.ofSeq part
-                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Stored))  
+                               |> List.map(fun(x) -> new TopicPartitionOffset(x.Topic, x.Partition, Offset.Beginning))  
         let fb = new System.Collections.Generic.List<TopicPartitionOffset>(fromBeginning |> List.toSeq)
         consumer.Assign(fb);
     )

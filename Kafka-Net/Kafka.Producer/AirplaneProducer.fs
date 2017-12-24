@@ -40,7 +40,7 @@ let main argv =
     config.Add("queue.buffering.max.ms", "300")
     config.Add("compression.codec", "snappy")
 
-    let topic = "Flights2"
+    let topic = "Flights"
     use producer = new Producer<Null, string>(config, null, new StringSerializer(Encoding.UTF8))
 
     //Read and publish a list from a file

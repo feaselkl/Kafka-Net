@@ -6,7 +6,6 @@ open System
 open System.Text
 open System.Collections.Generic
 open Newtonsoft.Json
-open System.Collections.Generic
 open FSharp.Data
 open FSharp.Data.SqlClient
 

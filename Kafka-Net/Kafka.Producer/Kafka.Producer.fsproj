@@ -1,6 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="..\packages\librdkafka.redist.0.9.5\build\net\librdkafka.redist.props" Condition="Exists('..\packages\librdkafka.redist.0.9.5\build\net\librdkafka.redist.props')" />
+  <Import Project="..\packages\FSharp.Compiler.Tools.4.1.29\build\FSharp.Compiler.Tools.props" Condition="Exists('..\packages\FSharp.Compiler.Tools.4.1.29\build\FSharp.Compiler.Tools.props')" />
+  <Import Project="..\packages\librdkafka.redist.0.11.3\build\librdkafka.redist.props" Condition="Exists('..\packages\librdkafka.redist.0.11.3\build\librdkafka.redist.props')" />
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -12,10 +13,11 @@
     <AssemblyName>Kafka.Producer</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <TargetFSharpCoreVersion>4.4.0.0</TargetFSharpCoreVersion>
+    <TargetFSharpCoreVersion>4.4.1.0</TargetFSharpCoreVersion>
     <Name>Kafka.Producer</Name>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -64,8 +66,7 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Confluent.Kafka">
-      <HintPath>..\packages\Confluent.Kafka.0.9.5\lib\net45\Confluent.Kafka.dll</HintPath>
-      <Private>True</Private>
+      <HintPath>..\packages\Confluent.Kafka.0.11.3\lib\net45\Confluent.Kafka.dll</HintPath>
     </Reference>
     <Reference Include="FSharp.Collections.ParallelSeq">
       <HintPath>..\packages\FSharp.Collections.ParallelSeq.1.0.2\lib\net40\FSharp.Collections.ParallelSeq.dll</HintPath>
@@ -76,7 +77,7 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>..\packages\Newtonsoft.Json.10.0.2\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <HintPath>..\packages\Newtonsoft.Json.10.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System" />
@@ -88,7 +89,8 @@
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('..\packages\librdkafka.redist.0.9.5\build\net\librdkafka.redist.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\librdkafka.redist.0.9.5\build\net\librdkafka.redist.props'))" />
+    <Error Condition="!Exists('..\packages\librdkafka.redist.0.11.3\build\librdkafka.redist.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\librdkafka.redist.0.11.3\build\librdkafka.redist.props'))" />
+    <Error Condition="!Exists('..\packages\FSharp.Compiler.Tools.4.1.29\build\FSharp.Compiler.Tools.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\FSharp.Compiler.Tools.4.1.29\build\FSharp.Compiler.Tools.props'))" />
   </Target>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

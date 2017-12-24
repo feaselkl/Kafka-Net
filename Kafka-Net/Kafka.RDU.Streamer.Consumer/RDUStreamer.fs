@@ -45,7 +45,7 @@ let main argv =
     topicConfig.Add("auto.offset.reset", "earliest")
     config.Add("default.topic.config", topicConfig)
 
-    let enrichedFlightsTopic = "EnrichedFlights2"
+    let enrichedFlightsTopic = "EnrichedFlights"
 
     use consumer = new Consumer<Null, string>(config, null, new StringDeserializer(Encoding.UTF8))
 
